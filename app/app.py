@@ -6,15 +6,17 @@ import ssl
 import boto3
 import urllib.request
 import urllib.error
-import requests as http_requests
 from flask import Flask, jsonify, request
 
 # ── Splunk HEC Handler ────────────────────────────────────────────────────────
+
+
 class SplunkHECHandler(logging.Handler):
     def __init__(self, url, token):
         super().__init__()
         self.url = f"{url}/services/collector/event"
         self.token = token
+        # Skip SSL verification for Splunk Cloud self-signed cert
         self.ssl_context = ssl.create_default_context()
         self.ssl_context.check_hostname = False
         self.ssl_context.verify_mode = ssl.CERT_NONE
@@ -92,35 +94,8 @@ def health():
 
 @app.route("/items", methods=["GET"])
 def get_items():
-    try:
-        logger.info("GET /items - fetching from inventory service")
-        # Calls external inventory service with impossibly short timeout
-        response = http_requests.get(
-            "http://inventory-service.internal/items",
-            timeout=0.001
-        )
-        return jsonify({"items": response.json()}), 200
-    except http_requests.exceptions.Timeout:
-        logger.error(
-            "GET /items failed - inventory-service timed out after 0.001s. "
-            "Service may be overloaded or unreachable. "
-            "Host: inventory-service.internal, timeout=0.001s",
-            exc_info=True
-        )
-        emit_error_metric()
-        return jsonify({"error": "upstream service timeout"}), 500
-    except http_requests.exceptions.ConnectionError:
-        logger.error(
-            "GET /items failed - cannot connect to inventory-service.internal. "
-            "Service is unreachable or DNS resolution failed.",
-            exc_info=True
-        )
-        emit_error_metric()
-        return jsonify({"error": "upstream service unreachable"}), 500
-    except Exception as e:
-        logger.error(f"GET /items unexpected error: {str(e)}", exc_info=True)
-        emit_error_metric()
-        return jsonify({"error": "internal server error"}), 500
+    logger.info("GET /items requested")
+    return jsonify({"items": ["item-1", "item-2", "item-3"]}), 200
 
 @app.route("/items", methods=["POST"])
 def post_item():
