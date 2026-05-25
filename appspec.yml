@@ -5,7 +5,7 @@ files:
     destination: /home/ec2-user
   - source: app/requirements.txt
     destination: /home/ec2-user
-
+file_exists_behavior: OVERWRITE
 hooks:
   ApplicationStop:
     - location: app/scripts/application_stop.sh
