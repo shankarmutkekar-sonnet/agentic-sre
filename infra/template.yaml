@@ -1,0 +1,90 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Lambda webhook forwarder + EventBridge rule for AWS DevOps Agent
+
+Parameters:
+  DevOpsAgentWebhookUrl:
+    Type: String
+    Description: Webhook URL from the DevOps Agent Space console
+
+  DevOpsAgentWebhookSecret:
+    Type: String
+    NoEcho: true
+    Description: HMAC secret from the DevOps Agent Space webhook configuration
+
+  AlarmName:
+    Type: String
+    Default: flask-api-cpu-high
+    Description: CloudWatch alarm name to filter on (EventBridge pattern)
+
+Resources:
+
+  # ── IAM role for the Lambda ──────────────────────────────────────────────────
+  WebhookLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: devops-agent-webhook-lambda-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  # ── Lambda function ──────────────────────────────────────────────────────────
+  WebhookForwarderLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: devops-agent-webhook-forwarder
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Role: !GetAtt WebhookLambdaRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          DEVOPS_AGENT_WEBHOOK_URL: !Ref DevOpsAgentWebhookUrl
+          DEVOPS_AGENT_WEBHOOK_SECRET: !Ref DevOpsAgentWebhookSecret
+      Code:
+        ZipFile: |
+          // Placeholder — deploy the real code from lambda/index.mjs via aws lambda update-function-code
+          export const handler = async () => ({ statusCode: 200, body: "placeholder" });
+
+  # ── EventBridge rule — CloudWatch alarm state changes ───────────────────────
+  AlarmStateChangeRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: flask-api-alarm-to-devops-agent
+      Description: Forwards CloudWatch alarm state changes to the DevOps Agent webhook Lambda
+      EventPattern:
+        source:
+          - aws.cloudwatch
+        detail-type:
+          - CloudWatch Alarm State Change
+        detail:
+          alarmName:
+            - prefix: flask-api
+      State: ENABLED
+      Targets:
+        - Id: WebhookForwarderLambda
+          Arn: !GetAtt WebhookForwarderLambda.Arn
+
+  # ── Permission for EventBridge to invoke Lambda ──────────────────────────────
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt WebhookForwarderLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt AlarmStateChangeRule.Arn
+
+Outputs:
+  LambdaFunctionName:
+    Value: !Ref WebhookForwarderLambda
+
+  LambdaFunctionArn:
+    Value: !GetAtt WebhookForwarderLambda.Arn
+
+  EventBridgeRuleArn:
+    Value: !GetAtt AlarmStateChangeRule.Arn

@@ -1,0 +1,116 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: CloudWatch alarms for the Flask API on EC2
+
+Parameters:
+  EC2InstanceId:
+    Type: AWS::EC2::Instance::Id
+    Description: Instance ID of the EC2 running the Flask app
+
+  AlarmSnsTopicArn:
+    Type: String
+    Default: ""
+    Description: >
+      Optional SNS topic ARN to notify on alarm state changes.
+      Leave blank if using EventBridge only.
+
+Conditions:
+  HasSnsTopic: !Not [!Equals [!Ref AlarmSnsTopicArn, ""]]
+
+Resources:
+
+  # ── 1. CPU utilisation ──────────────────────────────────────────────────────
+  CpuHighAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: flask-api-cpu-high
+      AlarmDescription: EC2 CPU utilisation above 70% for 2 consecutive periods
+      Namespace: AWS/EC2
+      MetricName: CPUUtilization
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref EC2InstanceId
+      Statistic: Average
+      Period: 60          # 1-minute periods
+      EvaluationPeriods: 2
+      Threshold: 70
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        !If
+          - HasSnsTopic
+          - [!Ref AlarmSnsTopicArn]
+          - []
+      OKActions:
+        !If
+          - HasSnsTopic
+          - [!Ref AlarmSnsTopicArn]
+          - []
+
+  # ── 2. Custom error-count metric ────────────────────────────────────────────
+  ErrorCountAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: flask-api-errors
+      AlarmDescription: More than 10 FlaskApp/ErrorCount events in 1 minute
+      Namespace: FlaskApp
+      MetricName: ErrorCount
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        !If
+          - HasSnsTopic
+          - [!Ref AlarmSnsTopicArn]
+          - []
+      OKActions:
+        !If
+          - HasSnsTopic
+          - [!Ref AlarmSnsTopicArn]
+          - []
+
+  # ── 3. EC2 status-check ─────────────────────────────────────────────────────
+  HealthCheckAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: flask-api-health-check
+      AlarmDescription: EC2 status check failed — instance may be unreachable
+      Namespace: AWS/EC2
+      MetricName: StatusCheckFailed
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref EC2InstanceId
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        !If
+          - HasSnsTopic
+          - [!Ref AlarmSnsTopicArn]
+          - []
+      OKActions:
+        !If
+          - HasSnsTopic
+          - [!Ref AlarmSnsTopicArn]
+          - []
+
+Outputs:
+  CpuHighAlarmArn:
+    Value: !GetAtt CpuHighAlarm.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-CpuHighAlarmArn"
+
+  ErrorCountAlarmArn:
+    Value: !GetAtt ErrorCountAlarm.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-ErrorCountAlarmArn"
+
+  HealthCheckAlarmArn:
+    Value: !GetAtt HealthCheckAlarm.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-HealthCheckAlarmArn"
