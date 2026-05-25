@@ -2,17 +2,24 @@ import os
 import time
 import logging
 import json
+import ssl
 import boto3
 import urllib.request
 import urllib.error
 from flask import Flask, jsonify, request
 
 # ── Splunk HEC Handler ────────────────────────────────────────────────────────
+
+
 class SplunkHECHandler(logging.Handler):
     def __init__(self, url, token):
         super().__init__()
         self.url = f"{url}/services/collector/event"
         self.token = token
+        # Skip SSL verification for Splunk Cloud self-signed cert
+        self.ssl_context = ssl.create_default_context()
+        self.ssl_context.check_hostname = False
+        self.ssl_context.verify_mode = ssl.CERT_NONE
 
     def emit(self, record):
         try:
@@ -37,9 +44,9 @@ class SplunkHECHandler(logging.Handler):
                     "Content-Type": "application/json"
                 }
             )
-            urllib.request.urlopen(req, timeout=2)
+            urllib.request.urlopen(req, timeout=2, context=self.ssl_context)
         except Exception:
-            pass  # never let logging errors crash the app
+            pass
 
 # ── Logging setup ─────────────────────────────────────────────────────────────
 SPLUNK_URL   = os.environ.get("SPLUNK_HEC_URL", "")
