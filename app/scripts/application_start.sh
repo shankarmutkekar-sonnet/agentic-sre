@@ -1,16 +1,25 @@
 #!/bin/bash
 set -e
 
-APP_DIR=/opt/flask-app
+APP_DIR=/home/ec2-user
+LOG_DIR=/var/log/flask-app
 PID_FILE=/var/run/flask-app.pid
-LOG_FILE=/var/log/flask-app.log
 
-# Start gunicorn with 2 workers; bind to all interfaces on port 5000
+# Create log directory if it doesn't exist
+sudo mkdir -p $LOG_DIR
+sudo chown ec2-user:ec2-user $LOG_DIR
+
+# Kill any existing Flask process on port 5000
+fuser -k 5000/tcp 2>/dev/null || true
+
+# Start gunicorn
 gunicorn \
   --workers 2 \
   --bind 0.0.0.0:5000 \
   --daemon \
   --pid "$PID_FILE" \
-  --log-file "$LOG_FILE" \
+  --log-file "$LOG_DIR/gunicorn.log" \
   --chdir "$APP_DIR" \
   app:app
+
+echo "Flask app started successfully"
