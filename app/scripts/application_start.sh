@@ -11,8 +11,7 @@ sudo chown ec2-user:ec2-user $LOG_DIR
 fuser -k 5000/tcp 2>/dev/null || true
 sleep 1
 
-# Load Splunk config from env file
-SPLUNK_HEC_URL=$(grep SPLUNK_HEC_URL /home/ec2-user/.bashrc | cut -d= -f2)
+SPLUNK_HEC_URL=https://prd-p-uaboh.splunkcloud.com:8088
 SPLUNK_HEC_TOKEN=$(grep SPLUNK_HEC_TOKEN /home/ec2-user/.bashrc | cut -d= -f2)
 
 $GUNICORN \
