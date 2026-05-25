@@ -1,0 +1,21 @@
+version: 0.0
+os: linux
+files:
+  - source: app/app.py
+    destination: /home/ec2-user
+  - source: app/requirements.txt
+    destination: /home/ec2-user
+
+hooks:
+  ApplicationStop:
+    - location: app/scripts/application_stop.sh
+      timeout: 30
+      runas: ec2-user
+  BeforeInstall:
+    - location: app/scripts/before_install.sh
+      timeout: 60
+      runas: ec2-user
+  ApplicationStart:
+    - location: app/scripts/application_start.sh
+      timeout: 30
+      runas: ec2-user
