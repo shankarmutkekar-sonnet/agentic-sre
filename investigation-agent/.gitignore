@@ -1,0 +1,17 @@
+# Secrets — never commit
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Lambda packaging
+package/
+function.zip
+layer.zip

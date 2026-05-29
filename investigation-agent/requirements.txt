@@ -1,0 +1,19 @@
+# LangGraph + LangChain core
+langgraph>=0.2.74
+langchain-core>=0.3.63          # resolved transitively; floor set by langchain-anthropic
+
+# LLM providers — install all; only the configured one is imported at runtime
+langchain-anthropic>=0.3.15
+langchain-openai>=0.3.16
+langchain-google-genai>=2.0.0
+
+# AWS
+boto3>=1.38.0
+
+# Slack
+slack_sdk>=3.27.0
+
+# No extra HTTP library needed — Splunk and GitHub use stdlib urllib
+
+# Local development — loads .env automatically; no-op in Lambda (not installed in layer)
+python-dotenv>=1.1.0
