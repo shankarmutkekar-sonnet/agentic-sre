@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "PowerShell(New-Item *)"
+      "PowerShell(New-Item *)",
+      "PowerShell(Get-Item D:\\\\Projects\\\\agentic-sre\\\\investigation-agent\\\\lambda-package.zip | Select-Object Name, @{N='Size\\(MB\\)';E={[math]::Round\\($_.Length/1MB,1\\)}})"
     ]
   }
 }

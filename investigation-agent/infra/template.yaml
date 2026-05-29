@@ -1,0 +1,428 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Agentic SRE — Investigation Agent infrastructure.
+  Deploys two Lambda functions (investigation + Slack webhook),
+  a DynamoDB table, an SQS queue, an API Gateway, and the IAM roles
+  that wire them together.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Parameters
+# ─────────────────────────────────────────────────────────────────────────────
+Parameters:
+
+  # Code location — S3 bucket/key produced by the build pipeline
+  LambdaS3Bucket:
+    Type: String
+    Description: S3 bucket that holds the Lambda deployment package (ZIP)
+
+  LambdaS3Key:
+    Type: String
+    Default: investigation-agent/package.zip
+    Description: S3 key of the Lambda deployment package
+
+  # LLM
+  LlmProvider:
+    Type: String
+    Default: anthropic
+    AllowedValues: [anthropic, openai, gemini]
+    Description: LLM provider — must match the API key supplied below
+
+  LlmModel:
+    Type: String
+    Default: claude-haiku-4-5-20251001
+    Description: Model ID passed to the LLM client
+
+  AnthropicApiKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: Anthropic API key (required when LlmProvider=anthropic)
+
+  OpenAiApiKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: OpenAI API key (required when LlmProvider=openai)
+
+  GoogleApiKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: Google API key (required when LlmProvider=gemini)
+
+  # GitHub
+  GithubToken:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: GitHub Personal Access Token for commit/PR correlation
+
+  GithubRepo:
+    Type: String
+    Default: ""
+    Description: "GitHub repo in owner/name format (e.g. acme/my-app)"
+
+  GithubBranch:
+    Type: String
+    Default: master
+    Description: Branch to query for commits around the incident
+
+  # Splunk
+  SplunkUrl:
+    Type: String
+    Default: ""
+    Description: "Splunk REST endpoint (e.g. https://my.splunkcloud.com:8089)"
+
+  SplunkToken:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: Splunk HEC / REST API token
+
+  SplunkIndex:
+    Type: String
+    Default: main
+    Description: Splunk index to search
+
+  # Slack
+  SlackBotToken:
+    Type: String
+    NoEcho: true
+    Description: Slack bot token (xoxb-...)
+
+  SlackSigningSecret:
+    Type: String
+    NoEcho: true
+    Description: Slack app signing secret (from Basic Information page)
+
+  SlackReviewChannel:
+    Type: String
+    Description: "Channel ID of #agentic-sre-review (C...)"
+
+  SlackIncidentsChannel:
+    Type: String
+    Description: "Channel ID of #agentic-sre-incident (C...)"
+
+  # CloudWatch
+  Ec2InstanceId:
+    Type: String
+    Default: ""
+    Description: EC2 instance ID for metric correlation (fallback when not in alarm dims)
+
+  CloudwatchLogGroup:
+    Type: String
+    Default: /flask-app/logs
+    Description: CloudWatch Log Group to search for errors
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Resources
+# ─────────────────────────────────────────────────────────────────────────────
+Resources:
+
+  # ── DynamoDB ─────────────────────────────────────────────────────────────────
+  InvestigationsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain   # Keep historical data if the stack is deleted
+    Properties:
+      TableName: sre-investigations
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: investigation_id
+          AttributeType: S
+        - AttributeName: created_at
+          AttributeType: S
+      KeySchema:
+        - AttributeName: investigation_id
+          KeyType: HASH
+        - AttributeName: created_at
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      Tags:
+        - Key: Project
+          Value: agentic-sre
+
+  # ── SQS Queue ─────────────────────────────────────────────────────────────────
+  InvestigationQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: sre-investigation-queue
+      VisibilityTimeout: 960   # 16 min — Lambda timeout (900 s) + 1 min buffer
+      MessageRetentionPeriod: 86400  # 1 day
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt InvestigationDLQ.Arn
+        maxReceiveCount: 2
+      Tags:
+        - Key: Project
+          Value: agentic-sre
+
+  InvestigationDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: sre-investigation-dlq
+      MessageRetentionPeriod: 1209600   # 14 days
+      Tags:
+        - Key: Project
+          Value: agentic-sre
+
+  # ── IAM Role — Investigation Lambda ─────────────────────────────────────────
+  InvestigationLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sre-investigation-lambda-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole
+      Policies:
+        - PolicyName: sre-investigation-policy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # CloudWatch metrics
+              - Effect: Allow
+                Action:
+                  - cloudwatch:GetMetricData
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:DescribeAlarmHistory
+                Resource: "*"
+              # CloudWatch Logs
+              - Effect: Allow
+                Action:
+                  - logs:FilterLogEvents
+                  - logs:DescribeLogStreams
+                Resource: "*"
+              # CloudTrail
+              - Effect: Allow
+                Action:
+                  - cloudtrail:LookupEvents
+                Resource: "*"
+              # DynamoDB
+              - Effect: Allow
+                Action:
+                  - dynamodb:PutItem
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource: !GetAtt InvestigationsTable.Arn
+              # SQS (receive + delete — managed policy covers this, but be explicit)
+              - Effect: Allow
+                Action:
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                Resource: !GetAtt InvestigationQueue.Arn
+
+  # ── Investigation Lambda ─────────────────────────────────────────────────────
+  InvestigationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: sre-investigation-agent
+      Description: LangGraph SRE investigation agent — processes CloudWatch alarms from SQS
+      Runtime: python3.12
+      Handler: handler.handler
+      Role: !GetAtt InvestigationLambdaRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key:    !Ref LambdaS3Key
+      Timeout: 900        # 15 minutes (Lambda max)
+      MemorySize: 512
+      Environment:
+        Variables:
+          LLM_PROVIDER:              !Ref LlmProvider
+          LLM_MODEL:                 !Ref LlmModel
+          ANTHROPIC_API_KEY:         !Ref AnthropicApiKey
+          OPENAI_API_KEY:            !Ref OpenAiApiKey
+          GOOGLE_API_KEY:            !Ref GoogleApiKey
+          AWS_REGION_NAME:           !Ref AWS::Region
+          EC2_INSTANCE_ID:           !Ref Ec2InstanceId
+          CLOUDWATCH_LOG_GROUP:      !Ref CloudwatchLogGroup
+          GITHUB_TOKEN:              !Ref GithubToken
+          GITHUB_REPO:               !Ref GithubRepo
+          GITHUB_BRANCH:             !Ref GithubBranch
+          SPLUNK_URL:                !Ref SplunkUrl
+          SPLUNK_TOKEN:              !Ref SplunkToken
+          SPLUNK_INDEX:              !Ref SplunkIndex
+          SLACK_BOT_TOKEN:           !Ref SlackBotToken
+          SLACK_REVIEW_CHANNEL:      !Ref SlackReviewChannel
+          SLACK_INCIDENTS_CHANNEL:   !Ref SlackIncidentsChannel
+          DYNAMODB_TABLE:            !Ref InvestigationsTable
+      Tags:
+        - Key: Project
+          Value: agentic-sre
+
+  # SQS → Investigation Lambda event source mapping
+  InvestigationSQSTrigger:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn:        !GetAtt InvestigationQueue.Arn
+      FunctionName:          !GetAtt InvestigationFunction.Arn
+      BatchSize:             1    # One investigation at a time (each can take up to 15 min)
+      MaximumBatchingWindowInSeconds: 0
+      FunctionResponseTypes:
+        - ReportBatchItemFailures  # Return failed messages to the queue individually
+
+  # ── IAM Role — Slack Webhook Lambda ─────────────────────────────────────────
+  SlackLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: sre-slack-webhook-lambda-role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: sre-slack-webhook-policy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # DynamoDB — read & update investigations (scan by slack_thread_ts)
+              - Effect: Allow
+                Action:
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt InvestigationsTable.Arn
+
+  # ── Slack Webhook Lambda ─────────────────────────────────────────────────────
+  SlackWebhookFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: sre-slack-webhook
+      Description: Handles Slack Events API (url_verification + reaction_added)
+      Runtime: python3.12
+      Handler: slack_handler.handler
+      Role: !GetAtt SlackLambdaRole.Arn
+      Code:
+        S3Bucket: !Ref LambdaS3Bucket
+        S3Key:    !Ref LambdaS3Key
+      Timeout: 30         # Slack expects a response within 3 s; 30 s is a safe upper bound
+      MemorySize: 256
+      Environment:
+        Variables:
+          SLACK_BOT_TOKEN:           !Ref SlackBotToken
+          SLACK_SIGNING_SECRET:      !Ref SlackSigningSecret
+          SLACK_REVIEW_CHANNEL:      !Ref SlackReviewChannel
+          SLACK_INCIDENTS_CHANNEL:   !Ref SlackIncidentsChannel
+          DYNAMODB_TABLE:            !Ref InvestigationsTable
+          AWS_REGION_NAME:           !Ref AWS::Region
+      Tags:
+        - Key: Project
+          Value: agentic-sre
+
+  # ── API Gateway (Slack webhook endpoint) ─────────────────────────────────────
+  SlackApiGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: sre-slack-events-api
+      Description: Receives Slack Events API payloads for the SRE investigation agent
+      EndpointConfiguration:
+        Types: [REGIONAL]
+
+  SlackApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref SlackApiGateway
+      ParentId:  !GetAtt SlackApiGateway.RootResourceId
+      PathPart:  events
+
+  SlackApiSlackResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref SlackApiGateway
+      ParentId:  !GetAtt SlackApiGateway.RootResourceId
+      PathPart:  slack
+
+  SlackApiSlackEventsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref SlackApiGateway
+      ParentId:  !Ref SlackApiSlackResource
+      PathPart:  events
+
+  SlackApiMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId:         !Ref SlackApiGateway
+      ResourceId:        !Ref SlackApiSlackEventsResource
+      HttpMethod:        POST
+      AuthorizationType: NONE
+      Integration:
+        Type:                  AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub
+          - arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${FnArn}/invocations
+          - FnArn: !GetAtt SlackWebhookFunction.Arn
+
+  SlackApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: SlackApiMethod
+    Properties:
+      RestApiId:   !Ref SlackApiGateway
+      StageName:   prod
+      Description: Production stage
+
+  # Allow API Gateway to invoke the Slack webhook Lambda
+  SlackApiGatewayInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt SlackWebhookFunction.Arn
+      Action:       lambda:InvokeFunction
+      Principal:    apigateway.amazonaws.com
+      SourceArn: !Sub
+        - arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiId}/*/POST/slack/events
+        - ApiId: !Ref SlackApiGateway
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Outputs
+# ─────────────────────────────────────────────────────────────────────────────
+Outputs:
+
+  InvestigationQueueUrl:
+    Description: SQS queue URL — send incident payloads here
+    Value: !Ref InvestigationQueue
+    Export:
+      Name: !Sub "${AWS::StackName}-QueueUrl"
+
+  InvestigationQueueArn:
+    Description: SQS queue ARN — for EventBridge rule target
+    Value: !GetAtt InvestigationQueue.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-QueueArn"
+
+  DynamoDBTableName:
+    Description: DynamoDB investigations table name
+    Value: !Ref InvestigationsTable
+    Export:
+      Name: !Sub "${AWS::StackName}-DynamoDBTable"
+
+  SlackWebhookUrl:
+    Description: >
+      Paste this URL into the Slack app's Event Subscriptions → Request URL field.
+    Value: !Sub
+      - https://${ApiId}.execute-api.${AWS::Region}.amazonaws.com/prod/slack/events
+      - ApiId: !Ref SlackApiGateway
+    Export:
+      Name: !Sub "${AWS::StackName}-SlackWebhookUrl"
+
+  InvestigationFunctionArn:
+    Description: ARN of the investigation Lambda function
+    Value: !GetAtt InvestigationFunction.Arn
+
+  SlackWebhookFunctionArn:
+    Description: ARN of the Slack webhook Lambda function
+    Value: !GetAtt SlackWebhookFunction.Arn
