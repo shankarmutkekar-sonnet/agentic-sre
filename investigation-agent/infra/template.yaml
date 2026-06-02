@@ -10,6 +10,22 @@ Description: >
 # ─────────────────────────────────────────────────────────────────────────────
 Parameters:
 
+  # VPC networking
+  VpcCidr:
+    Type: String
+    Default: "10.0.0.0/16"
+    Description: CIDR block for the new SRE VPC
+
+  PublicSubnetCidr:
+    Type: String
+    Default: "10.0.1.0/24"
+    Description: CIDR for the public subnet (NAT Gateway)
+
+  PrivateSubnetCidr:
+    Type: String
+    Default: "10.0.2.0/24"
+    Description: CIDR for the private subnet (Lambda)
+
   # Code location — S3 bucket/key produced by the build pipeline
   LambdaS3Bucket:
     Type: String
@@ -120,6 +136,157 @@ Parameters:
 # ─────────────────────────────────────────────────────────────────────────────
 Resources:
 
+  # ── VPC ──────────────────────────────────────────────────────────────────────
+
+  SreVpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: sre-vpc
+        - Key: Project
+          Value: agentic-sre
+
+  SreInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: sre-igw
+        - Key: Project
+          Value: agentic-sre
+
+  SreVpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref SreVpc
+      InternetGatewayId: !Ref SreInternetGateway
+
+  # Public subnet — NAT Gateway lives here, has a route to the IGW
+  SrePublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SreVpc
+      CidrBlock: !Ref PublicSubnetCidr
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: sre-public-subnet
+        - Key: Project
+          Value: agentic-sre
+
+  # Private subnet — Lambda ENIs land here, traffic exits via NAT Gateway
+  SrePrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SreVpc
+      CidrBlock: !Ref PrivateSubnetCidr
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: sre-private-subnet
+        - Key: Project
+          Value: agentic-sre
+
+  SreNatEip:
+    Type: AWS::EC2::EIP
+    DependsOn: SreVpcGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: sre-nat-eip
+        - Key: Project
+          Value: agentic-sre
+
+  SreNatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt SreNatEip.AllocationId
+      SubnetId: !Ref SrePublicSubnet
+      Tags:
+        - Key: Name
+          Value: sre-nat-gateway
+        - Key: Project
+          Value: agentic-sre
+
+  SrePublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SreVpc
+      Tags:
+        - Key: Name
+          Value: sre-public-rt
+        - Key: Project
+          Value: agentic-sre
+
+  SrePublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: SreVpcGatewayAttachment
+    Properties:
+      RouteTableId: !Ref SrePublicRouteTable
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref SreInternetGateway
+
+  SrePublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SrePublicSubnet
+      RouteTableId: !Ref SrePublicRouteTable
+
+  SrePrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SreVpc
+      Tags:
+        - Key: Name
+          Value: sre-private-rt
+        - Key: Project
+          Value: agentic-sre
+
+  # Lambda outbound traffic → NAT Gateway → fixed Elastic IP → Splunk Cloud
+  SrePrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref SrePrivateRouteTable
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId: !Ref SreNatGateway
+
+  SrePrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SrePrivateSubnet
+      RouteTableId: !Ref SrePrivateRouteTable
+
+  # Security group for the investigation Lambda
+  # No inbound rules needed — Lambda is never called directly inside the VPC
+  SreLambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: sre-lambda-sg
+      GroupDescription: Outbound-only SG for sre-investigation-agent Lambda
+      VpcId: !Ref SreVpc
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: "0.0.0.0/0"
+          Description: HTTPS to AWS services and Splunk Cloud port-443 fallback
+        - IpProtocol: tcp
+          FromPort: 8089
+          ToPort: 8089
+          CidrIp: "0.0.0.0/0"
+          Description: Splunk Cloud REST API
+      Tags:
+        - Key: Name
+          Value: sre-lambda-sg
+        - Key: Project
+          Value: agentic-sre
+
   # ── DynamoDB ─────────────────────────────────────────────────────────────────
   InvestigationsTable:
     Type: AWS::DynamoDB::Table
@@ -181,6 +348,7 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
         - arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
       Policies:
         - PolicyName: sre-investigation-policy
           PolicyDocument:
@@ -235,6 +403,11 @@ Resources:
         S3Key:    !Ref LambdaS3Key
       Timeout: 900        # 15 minutes (Lambda max)
       MemorySize: 512
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref SreLambdaSecurityGroup
+        SubnetIds:
+          - !Ref SrePrivateSubnet
       Environment:
         Variables:
           LLM_PROVIDER:              !Ref LlmProvider
@@ -418,6 +591,14 @@ Outputs:
       - ApiId: !Ref SlackApiGateway
     Export:
       Name: !Sub "${AWS::StackName}-SlackWebhookUrl"
+
+  NatGatewayElasticIP:
+    Description: >
+      Fixed outbound IP of the NAT Gateway.
+      Whitelist this IP in Splunk Cloud so Lambda can reach port 8089.
+    Value: !Ref SreNatEip
+    Export:
+      Name: !Sub "${AWS::StackName}-NatGatewayEIP"
 
   InvestigationFunctionArn:
     Description: ARN of the investigation Lambda function

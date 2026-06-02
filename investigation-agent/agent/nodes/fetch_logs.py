@@ -130,11 +130,12 @@ def _fetch_splunk_sync(start: datetime, end: datetime) -> list[dict]:
     ssl_ctx.verify_mode    = ssl.CERT_NONE
 
     def _make_request(target_url: str) -> urllib.request.Request:
+        # Splunk Cloud REST API uses Bearer token auth (not HEC "Splunk" prefix)
         return urllib.request.Request(
             target_url,
             data=payload,
             headers={
-                "Authorization": f"Splunk {SPLUNK_TOKEN}",
+                "Authorization": f"Bearer {SPLUNK_TOKEN}",
                 "Content-Type":  "application/x-www-form-urlencoded",
             },
         )
