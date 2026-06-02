@@ -1,6 +1,6 @@
 """
 fetch_github — LangGraph node (parallel)
-Fetches GitHub commits and merged PRs in the 60-minute window before the incident.
+Fetches GitHub commits and merged PRs in the 6-hour/24-hour window before the incident.
 
 Uses GitHub REST API v3 (no PyGitHub dependency — urllib only).
 Authentication via GITHUB_TOKEN env var (Personal Access Token or GitHub App token).
@@ -33,8 +33,8 @@ GITHUB_TOKEN      = os.environ.get("GITHUB_TOKEN", "")
 GITHUB_REPO       = os.environ.get("GITHUB_REPO", "")
 GITHUB_BRANCH     = os.environ.get("GITHUB_BRANCH", "master")
 GITHUB_API_BASE   = "https://api.github.com"
-COMMIT_WINDOW_MIN = 60   # look back 60 min for commits
-PR_WINDOW_HOURS   = 2    # look back 2 h for merged PRs
+COMMIT_WINDOW_MIN = 360  # look back 6 h for commits
+PR_WINDOW_HOURS   = 24   # look back 24 h for merged PRs
 MAX_COMMITS       = 20
 MAX_PRS           = 10
 
