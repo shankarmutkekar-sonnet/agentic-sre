@@ -19,7 +19,7 @@ spec:
         - name: flask-app
           # IMAGE_TAG is updated by CI (GitHub Actions) on every push to master.
           # ArgoCD detects the Git change and syncs the cluster automatically.
-          image: 682975283486.dkr.ecr.eu-north-1.amazonaws.com/agentic-sre-flask:7cb11393707cd857155c0ebb2ba24844d288492b
+          image: 682975283486.dkr.ecr.eu-north-1.amazonaws.com/agentic-sre-flask:169564079fb1d118b53fe2e1bb44ef854099efa9
           ports:
             - containerPort: 5000
           env:
