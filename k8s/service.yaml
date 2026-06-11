@@ -1,8 +1,11 @@
-apiVersion: v1
+﻿apiVersion: v1
 kind: Service
 metadata:
   name: flask-app
   namespace: flask-app
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+    service.beta.kubernetes.io/aws-load-balancer-type: external
 spec:
   selector:
     app: flask-app
@@ -10,6 +13,4 @@ spec:
     - protocol: TCP
       port: 80
       targetPort: 5000
-  # Use LoadBalancer for EKS (provisions an AWS NLB).
-  # Switch to ClusterIP + Ingress if you add an ingress controller.
   type: LoadBalancer
