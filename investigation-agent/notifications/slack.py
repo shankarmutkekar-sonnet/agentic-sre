@@ -116,6 +116,12 @@ def _review_blocks(state: InvestigationState) -> list:
                 },
                 {
                     "type": "button",
+                    "text": {"type": "plain_text", "text": "🔄 Rollback via ArgoCD"},
+                    "action_id": "rollback_via_argocd",
+                    "value": inv_id,
+                },
+                {
+                    "type": "button",
                     "text": {"type": "plain_text", "text": "❌ Dismiss"},
                     "style": "danger",
                     "action_id": "dismiss_investigation",

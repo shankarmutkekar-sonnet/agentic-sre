@@ -45,6 +45,9 @@ below and respond with ONLY a valid JSON object — no markdown, no prose outsid
 ## Recent GitHub Commits and Deployments
 {github_commits}
 
+## ArgoCD Application State
+{argocd_data}
+
 ## Intermediate Observations (from investigation nodes)
 {observations}
 
@@ -96,6 +99,7 @@ def _build_prompt(state: InvestigationState) -> str:
         logs              = _truncate(state.get("logs", []), max_chars=8_000),
         cloudtrail_events = _truncate(state.get("cloudtrail_events", [])),
         github_commits    = _truncate(state.get("github_commits", [])),
+        argocd_data       = _truncate(state.get("argocd_data", {})),
         observations      = "\n".join(state.get("observations", [])),
     )
 

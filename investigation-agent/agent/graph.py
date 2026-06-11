@@ -2,18 +2,18 @@
 graph.py — LangGraph StateGraph definition for the SRE Investigation Agent.
 
 Execution flow:
-                    ┌─────────────┐
-                    │ fetch_alarm │  (entry — sequential)
-                    └──────┬──────┘
-           ┌───────────────┼───────────────┬──────────────────┐
-           ▼               ▼               ▼                  ▼
-   fetch_metrics     fetch_logs   fetch_cloudtrail     fetch_github
-     (parallel)      (parallel)     (parallel)          (parallel)
-           └───────────────┼───────────────┴──────────────────┘
-                           ▼
-                      synthesize  (fan-in — waits for all 4)
-                           │
-                          END
+                         ┌─────────────┐
+                         │ fetch_alarm │  (entry — sequential)
+                         └──────┬──────┘
+        ┌──────────────┬────────┼────────┬──────────────────┐
+        ▼              ▼        ▼        ▼                  ▼
+ fetch_metrics   fetch_logs  fetch_  fetch_github   fetch_argocd
+   (parallel)    (parallel) cloudtrail (parallel)    (parallel)
+        └──────────────┴────────┼────────┴──────────────────┘
+                                ▼
+                          synthesize  (fan-in — waits for all 5)
+                                │
+                               END
 
 Parallel execution:
   LangGraph executes nodes that share the same "super-step" concurrently
@@ -32,6 +32,7 @@ from langgraph.graph import END, StateGraph
 from agent.state import InvestigationState
 from agent.nodes import (
     fetch_alarm,
+    fetch_argocd,
     fetch_cloudtrail,
     fetch_github,
     fetch_logs,
@@ -55,24 +56,25 @@ def build_graph():
     graph.add_node("fetch_logs",       fetch_logs.run)
     graph.add_node("fetch_cloudtrail", fetch_cloudtrail.run)
     graph.add_node("fetch_github",     fetch_github.run)
+    graph.add_node("fetch_argocd",     fetch_argocd.run)
     graph.add_node("synthesize",       synthesize.run)
 
     # ── Entry point ───────────────────────────────────────────────────────────
     graph.set_entry_point("fetch_alarm")
 
-    # ── Fan-out: fetch_alarm → all four parallel investigation nodes ──────────
+    # ── Fan-out: fetch_alarm → all five parallel investigation nodes ──────────
     graph.add_edge("fetch_alarm", "fetch_metrics")
     graph.add_edge("fetch_alarm", "fetch_logs")
-  
     graph.add_edge("fetch_alarm", "fetch_cloudtrail")
     graph.add_edge("fetch_alarm", "fetch_github")
+    graph.add_edge("fetch_alarm", "fetch_argocd")
 
-    # ── Fan-in: all four parallel nodes → synthesize ──────────────────────────
-    # LangGraph waits for all branches to complete before advancing to synthesize
+    # ── Fan-in: all five parallel nodes → synthesize ──────────────────────────
     graph.add_edge("fetch_metrics",    "synthesize")
     graph.add_edge("fetch_logs",       "synthesize")
     graph.add_edge("fetch_cloudtrail", "synthesize")
     graph.add_edge("fetch_github",     "synthesize")
+    graph.add_edge("fetch_argocd",     "synthesize")
 
     # ── Terminal edge ─────────────────────────────────────────────────────────
     graph.add_edge("synthesize", END)

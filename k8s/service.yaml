@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: flask-app
+  namespace: flask-app
+spec:
+  selector:
+    app: flask-app
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 5000
+  # Use LoadBalancer for EKS (provisions an AWS NLB).
+  # Switch to ClusterIP + Ingress if you add an ingress controller.
+  type: LoadBalancer

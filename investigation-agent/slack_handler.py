@@ -30,8 +30,11 @@ import hmac
 import json
 import logging
 import os
+import ssl
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from typing import Any
 
@@ -41,6 +44,54 @@ load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 from notifications.slack import post_to_incidents
 from storage import dynamodb as db
+
+ARGOCD_URL      = os.environ.get("ARGOCD_URL", "")
+ARGOCD_TOKEN    = os.environ.get("ARGOCD_TOKEN", "")
+ARGOCD_APP_NAME = os.environ.get("ARGOCD_APP_NAME", "flask-app")
+_VERIFY_SSL     = os.environ.get("ARGOCD_VERIFY_SSL", "false").lower() == "true"
+
+
+def _argocd_ssl_context():
+    ctx = ssl.create_default_context()
+    if not _VERIFY_SSL:
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
+def _trigger_argocd_rollback(revision: str | None = None) -> tuple[bool, str]:
+    """
+    Call the ArgoCD API to roll the application back to the previous revision.
+    If revision is None, ArgoCD rolls back to the most recent successful sync.
+    Returns (success, message).
+    """
+    if not ARGOCD_URL or not ARGOCD_TOKEN:
+        return False, "ArgoCD not configured (ARGOCD_URL/ARGOCD_TOKEN missing)"
+
+    url  = f"{ARGOCD_URL.rstrip('/')}/api/v1/applications/{ARGOCD_APP_NAME}/rollback"
+    body = json.dumps({"revision": revision} if revision else {}).encode()
+    req  = urllib.request.Request(
+        url,
+        data=body,
+        method="POST",
+        headers={
+            "Authorization":  f"Bearer {ARGOCD_TOKEN}",
+            "Content-Type":   "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15, context=_argocd_ssl_context()) as resp:
+            result = json.loads(resp.read().decode())
+            op_phase = (
+                result.get("status", {})
+                      .get("operationState", {})
+                      .get("phase", "initiated")
+            )
+            return True, f"Rollback {op_phase}"
+    except urllib.error.HTTPError as exc:
+        return False, f"ArgoCD API HTTP {exc.code}: {exc.reason}"
+    except Exception as exc:
+        return False, f"ArgoCD rollback error: {exc}"
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -166,6 +217,23 @@ def _handle_block_action(payload: dict) -> dict:
             return {"statusCode": 200, "body": json.dumps({"status": "published"})}
         else:
             return {"statusCode": 200, "body": json.dumps({"status": "publish_failed"})}
+
+    elif action_id == "rollback_via_argocd":
+        argocd_data = record.get("raw_data", {}).get("argocd_data", {})
+        prev_revision = None
+        history = argocd_data.get("sync_history", [])
+        if len(history) >= 2:
+            prev_revision = history[-2].get("revision")
+
+        success, msg = _trigger_argocd_rollback(prev_revision)
+        db.update_investigation(inv_id, {
+            "argocd_rollback_requested_by": user_id,
+            "argocd_rollback_result":       msg,
+            "argocd_rollback_at":           datetime.now(timezone.utc).isoformat(),
+        })
+        status = "rollback_triggered" if success else "rollback_failed"
+        logger.info("[slack_handler] ArgoCD rollback for %s by %s: %s", inv_id, user_id, msg)
+        return {"statusCode": 200, "body": json.dumps({"status": status, "message": msg})}
 
     elif action_id == "dismiss_investigation":
         db.update_investigation(inv_id, {

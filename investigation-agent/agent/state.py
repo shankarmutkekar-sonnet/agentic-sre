@@ -26,6 +26,7 @@ class InvestigationState(TypedDict):
     logs: List[dict]             # fetch_logs node
     cloudtrail_events: List[dict]  # fetch_cloudtrail node
     github_commits: List[dict]   # fetch_github node
+    argocd_data: dict            # fetch_argocd node
 
     # ── Synthesis output ──────────────────────────────────────────────────────
     # REDUCER: each parallel node appends its own string; LangGraph adds the lists

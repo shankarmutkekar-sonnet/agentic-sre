@@ -99,6 +99,7 @@ def save_investigation(state: InvestigationState) -> bool:
             "logs":              state.get("logs", [])[:MAX_LOGS],
             "cloudtrail_events": state.get("cloudtrail_events", [])[:MAX_CLOUDTRAIL],
             "github_commits":    state.get("github_commits", []),
+            "argocd_data":       state.get("argocd_data", {}),
         }),
     }
 
