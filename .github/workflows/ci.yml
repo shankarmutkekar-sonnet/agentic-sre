@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - master
+    paths-ignore:
+      - 'k8s/deployment.yaml'
 
 env:
   AWS_REGION: eu-north-1
@@ -54,5 +56,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add k8s/deployment.yaml
-          git diff --staged --quiet || git commit -m "ci: update image tag to ${{ github.sha }}"
+          git diff --staged --quiet || git commit -m "ci: update image tag to ${{ github.sha }} [skip ci]"
           git push
