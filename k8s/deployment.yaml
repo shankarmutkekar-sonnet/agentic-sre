@@ -56,3 +56,4 @@ spec:
             limits:
               cpu: "500m"
               memory: "512Mi"
+# manual test edit - should be removed afterwards
