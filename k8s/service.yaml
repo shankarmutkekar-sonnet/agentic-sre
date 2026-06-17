@@ -14,3 +14,12 @@ spec:
       port: 80
       targetPort: 5000
   type: LoadBalancer
+
+# Declarative vs Imperative
+# Declarative: You define the desired state/outcome of the system in a YAML file, and 
+# Kubernetes takes care of making the actual state match the desired state. 
+# This is done using `kubectl apply -f <file.yaml>`.
+# Imperative: You directly execute commands/provide steps to change the state of the system. 
+
+# k8s/service.yaml declares: "I want a stable network entry point that routes traffic to 
+# pods labeled app: flask-app, and I want AWS to provision a public load balancer for it."

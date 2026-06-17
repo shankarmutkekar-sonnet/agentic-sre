@@ -21,3 +21,6 @@ spec:
       selfHeal: true   # re-sync if cluster drifts from Git
     syncOptions:
       - CreateNamespace=true
+
+# "There should exist an ArgoCD Application named flask-app, which 
+# watches k8s/ on master in this GitHub repo, and auto-syncs it into the flask-app namespace."
