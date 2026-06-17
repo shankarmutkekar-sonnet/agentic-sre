@@ -135,6 +135,7 @@ def emit_error_metric():
         }]
     )
 
+# Updated via GitOps pipeline demo
 # ── Routes ────────────────────────────────────────────────────────────────────
 @app.route("/health")
 def health():
