@@ -1,4 +1,4 @@
-# Agentic SRE — End-to-End Incident Response on AWS
+# Agentic SRE — End-to-End Incident Response on AWS.
 
 Automatically detects incidents on a Flask API running on EC2, investigates root causes
 using AWS DevOps Agent, and posts findings to Slack — with no human intervention.
